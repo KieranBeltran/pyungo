@@ -199,3 +199,87 @@ def test_dag_pretty_print():
     dag = graph.dag
     for i, fct_name in enumerate(expected):
         assert dag[i][0].fct_name == fct_name
+
+
+def test_map_inputs():
+    graph = Graph()
+
+    @graph.register(
+        inputs=['a', 'b'],
+        outputs=['c'],
+        map=['a']
+    )
+    def f_my_function(a, b):
+        return a + b
+
+    @graph.register(
+        inputs=['c'],
+        outputs=['d'],
+        aggregate=['c']
+    )
+    def f_my_function2(c):
+        return sum(c)
+
+    res = graph.calculate(data={'a': [1, 2], 'b': 3})
+    assert res == 9
+    assert graph.data['d'] == 9
+
+    res = graph.calculate(data={'a': [1, 2], 'b': 3})
+    assert res == 9
+    assert graph.data['d'] == 9
+
+
+def test_map_inputs_2():
+    graph = Graph()
+
+    @graph.register(
+        inputs=['a', 'b'],
+        outputs=['c'],
+        map=['a', 'b']
+    )
+    def f_my_function(a, b):
+        return a + b
+
+    @graph.register(
+        inputs=['c'],
+        outputs=['d'],
+        aggregate=['c']
+    )
+    def f_my_function2(c):
+        return sum(c)
+
+    res = graph.calculate(data={'a': [1, 2], 'b': [3, 4]})
+    assert res == 10
+    assert graph.data['d'] == 10
+
+
+def test_map_inputs_3():
+    graph = Graph()
+
+    @graph.register(
+        inputs=['a', 'b'],
+        outputs=['c'],
+        map=['a']
+    )
+    def f_my_function(a, b):
+        return a + b
+
+    @graph.register(
+        inputs=['c'],
+        outputs=['d'],
+        map=['c']
+    )
+    def f_my_function2(c):
+        return c * 10
+    
+    @graph.register(
+        inputs=['d'],
+        outputs=['e'],
+        aggregate=['d']
+    )
+    def f_my_function3(d):
+        return sum(d)
+
+    res = graph.calculate(data={'a': [1, 2, 74], 'b': 5})
+    assert res == 920
+    assert graph.data['e'] == 920
