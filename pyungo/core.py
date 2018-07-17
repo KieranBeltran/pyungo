@@ -2,6 +2,7 @@ from copy import deepcopy
 import datetime as dt
 from functools import reduce
 import logging
+from collections import namedtuple
 
 
 logging.basicConfig()
@@ -38,6 +39,10 @@ def topological_sort(data):
         raise PyungoError('A cyclic dependency exists amongst {}'.format(data))
 
 
+MapInput = namedtuple('MapInput', ['name'])
+AggInput = namedtuple('AggInput', ['name'])
+
+
 class Node:
     ID = 0
     def __init__(self, fct, inputs, output_names, args=None, kwargs=None):
@@ -45,6 +50,8 @@ class Node:
         self._id = str(Node.ID)
         self._fct = fct
         self._data_provided = {}
+        self._mapped_input = None
+        self._agg_input = None
         self._process_inputs(inputs)
         self._args = args if args else []
         self._kwargs = kwargs if kwargs else []
@@ -75,6 +82,14 @@ class Node:
         return input_names
 
     @property
+    def mapped_input(self):
+        return self._mapped_input
+
+    @property
+    def agg_input(self):
+        return self._agg_input
+
+    @property
     def kwargs(self):
         return self._kwargs
 
@@ -96,6 +111,16 @@ class Node:
                     msg = 'dict inputs should have only one key and cannot be empty'
                     raise PyungoError(msg)
                 self._data_provided.update(input_)
+            elif isinstance(input_, MapInput):
+                if self._mapped_input is not None:
+                    raise PyungoError()
+                self._input_names.append(input_.name)
+                self._mapped_input = input_.name
+            elif isinstance(input_, AggInput):
+                if self._agg_input is not None:
+                    raise PyungoError()
+                self._input_names.append(input_.name)
+                self._agg_input = input_.name
             else:
                 msg = 'inputs need to be of type str or dict'
                 raise PyungoError(msg)
@@ -107,6 +132,23 @@ class Node:
 
     def run_with_loaded_inputs(self):
         return self(self._data_to_pass, **self._kwargs_to_pass)
+
+
+class DynamicNode(Node):
+    @classmethod
+    def from_node(cls, node, i):
+        node = deepcopy(node)
+        input_names = node._input_names
+        output_names = node._output_names
+        new_input_names = []
+        for inp in input_names:
+            if inp == node.mapped_input or inp == node.agg_input:
+                new_input_names.append(inp+'_'+str(i))
+            else:
+                new_input_names.append(inp)
+        if node.mapped_input:
+            output_names = [out+'_'+str(i) for out in output_names]
+        return cls(node._fct, new_input_names, output_names, node._args, node._kwargs)
 
 
 class Graph:
@@ -188,9 +230,13 @@ class Graph:
     def _dependencies(self):
         dep = {}
         for node in self._nodes:
+            if node.mapped_input:
+                continue
             d = dep.setdefault(node.id, [])
             for inp in node.input_names:
                 for node2 in self._nodes:
+                    if node2.mapped_input:
+                        continue
                     if inp in node2.output_names:
                         d.append(node2.id)
         return dep
@@ -216,11 +262,43 @@ class Graph:
             msg = 'The following inputs are not used by the model: {}'.format(list(diff))
             raise PyungoError(msg)
 
+    def _create_dynamic_nodes(self):
+        new_nodes = []
+        # map
+        for node in self._nodes:
+            if isinstance(node, DynamicNode):
+                continue
+            if not node.mapped_input:
+                continue
+            mapped_data_len = len(self._data[node.mapped_input])
+            for i in range(mapped_data_len):
+                new_node = DynamicNode.from_node(node, i)
+                new_nodes.append(new_node)
+            # data
+            values = self._data.pop(node.mapped_input)
+            for j, value in enumerate(values):
+                self._data[node.mapped_input+'_'+str(j)] = value
+            # agg
+            #if node.agg_input is not None:
+            #    agged_data_len = len(self._data[node._input])
+            #else:
+            #    agg_data_len = 0
+            #for i in range(agged_data_len):
+            #    new_node = DynamicNode.from_node(node, i)
+            #    new_nodes.append(new_node)
+
+        self._nodes.extend(new_nodes)
+
+        #import pdb; pdb.set_trace()
+
     def calculate(self, data):
         t1 = dt.datetime.utcnow()
         LOGGER.info('Starting calculation...')
         self._data = deepcopy(data)
         self._check_inputs(data)
+        #  dynamic nodes
+        self._create_dynamic_nodes()
+        # get and sort dependencies
         dep = self._dependencies()
         sorted_dep = topological_sort(dep)
         for items in sorted_dep:

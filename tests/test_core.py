@@ -1,5 +1,5 @@
 import pytest
-from pyungo.core import Graph, PyungoError
+from pyungo.core import Graph, PyungoError, MapInput, AggInput
 
 
 def test_simple():
@@ -288,3 +288,26 @@ def test_multiple_keys_input_dict():
             return a + b
 
     assert "dict inputs should have only one key and cannot be empty" in str(err.value)
+
+
+def test_map_inputs():
+    graph = Graph()
+
+    @graph.register(
+        inputs=[MapInput('a'), 'b'],
+        outputs=['c']
+    )
+    def f_my_function(a, b):
+        return a + b
+
+    @graph.register(
+        inputs=['c'],
+        outputs=['d']
+    )
+    def f_my_function2(c):
+        return c
+
+    res = graph.calculate(data={'a': [1, 2], 'b': 3})
+    #assert res == 9
+    import pdb; pdb.set_trace()
+    assert graph.data['c'] == 9
